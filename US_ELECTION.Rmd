@@ -1,0 +1,298 @@
+---
+title: "projectdss"
+author: "Jerrycho 123180036"
+date: "1/28/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+library(knitr)
+library(tidyr)
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(tibble)
+library(stringr)
+library(gridExtra)
+library(scales)
+library(lubridate)
+library(ggrepel)
+library(reshape2)
+library(kableExtra)
+library(tm)
+library(wordcloud)
+library(tidytext)
+library(broom)
+library(topicmodels)
+```
+```{r}
+tweets <- read.csv("D:/ML/Data&Clasifier/tweets.csv")
+head(tweets)
+```
+Explorating Data Analysis (EDA)
+Structure dataset
+```{r}
+tweets$time <- ymd_hms(tweets$time)
+glimpse(tweets)
+```
+Language
+```{r}
+kable(tweets %>% group_by(lang) %>% count() %>% rename(Language = lang, 'Number of Tweets' = n))
+```
+Check Language
+```{r}
+tweets <- tweets %>% filter(lang != "es")
+
+tweets$handle <- sub("realDonaldTrump", "Trump", tweets$handle)
+tweets$handle <- sub("HillaryClinton", "Clinton", tweets$handle)
+tweets$is_retweet <- as.logical(tweets$is_retweet)
+
+kable(tweets %>% filter(is_retweet==FALSE) %>% group_by(handle) %>% count())
+```
+tweet retweet
+```{r}
+p1 <- tweets %>% filter(original_author != "") %>% group_by(original_author) %>% count() %>% filter(n>=5) %>% arrange(desc(n)) %>% ungroup()
+
+ggplot(p1, aes(x=reorder(original_author, n), y=n)) +
+        geom_bar(stat="identity", fill="darkgreen") + coord_flip() +
+        labs(x="", y="number of tweets retweeted by either Trump or Clinton") +
+        theme(legend.position = "none")
+```
+Text Mining
+tweet text
+```{r}
+tweets$author <- ifelse(tweets$original_author != "", tweets$original_author, tweets$handle)
+
+kable(head(tweets %>% select(author, handle, text), 20), format = "html") %>%
+        kable_styling() %>%
+        column_spec(1, bold = T, width = "2cm", border_right = T) %>%
+        column_spec(2, bold = T, width = "2cm", border_right = T) %>%
+        column_spec(3, width = "19cm")
+```
+Making VCorpus
+```{r}
+tweets <- tweets %>% rename (doc_id = id)
+ClintonTweets <- tweets %>% filter(is_retweet=="FALSE" & handle=="Clinton")
+TrumpTweets <- tweets %>% filter(is_retweet=="FALSE" & handle=="Trump")
+
+TrumpCorpus <- DataframeSource(TrumpTweets)
+TrumpCorpus <- VCorpus(TrumpCorpus)
+
+ClintonCorpus <- DataframeSource(ClintonTweets)
+ClintonCorpus <- VCorpus(ClintonCorpus)
+
+inspect(TrumpCorpus[1:2])
+```
+Clean Corpus
+```{r}
+CleanCorpus <- function(x){
+     x <- tm_map(x, content_transformer(tolower))
+     x <- tm_map(x, removeNumbers) #remove numbers before removing words. Otherwise "trump2016" leaves "trump"
+     x <- tm_map(x, removeWords, tidytext::stop_words$word)
+     x <- tm_map(x, removePunctuation)
+     x <- tm_map(x, stripWhitespace)
+     return(x)
+}
+
+RemoveNames <- function(x) {
+       x <- tm_map(x, removeWords, c("donald", "hillary", "clinton", "trump", "realdonaldtrump", "hillaryclinton"))
+       return(x)
+}
+
+CreateTermsMatrix <- function(x) {
+        x <- TermDocumentMatrix(x)
+        x <- as.matrix(x)
+        y <- rowSums(x)
+        y <- sort(y, decreasing=TRUE)
+        return(y)
+}
+
+TrumpCorpus <- CleanCorpus(TrumpCorpus)
+TermFreqTrump <- CreateTermsMatrix(TrumpCorpus)
+
+content(TrumpCorpus[[1]])
+```
+Words that Trump used most
+```{r}
+TrumpDF <- data.frame(word=names(TermFreqTrump), count=TermFreqTrump)
+
+TrumpDF[1:20,] %>%
+        ggplot(aes(x=(reorder(word, count)), y=count)) +
+        geom_bar(stat='identity', fill="blue") + coord_flip() + theme(legend.position = "none") +
+        labs(x="")
+```
+```{r}
+set.seed(2020)
+
+TrumpCorpus1 <- RemoveNames(TrumpCorpus)
+TermFreqTrump <- CreateTermsMatrix(TrumpCorpus1)
+TrumpDF <- data.frame(word=names(TermFreqTrump), count=TermFreqTrump)
+
+
+wordcloud(TrumpDF$word, TrumpDF$count, max.words = 100, scale=c(2.5,.5), random.color = TRUE, colors=brewer.pal(9,"Set1"))
+```
+Words that Clinton used most
+```{r}
+ClintonCorpus <- CleanCorpus(ClintonCorpus)
+TermFreqClinton <- CreateTermsMatrix(ClintonCorpus)
+
+ClintonDF <- data.frame(word=names(TermFreqClinton), count=TermFreqClinton)
+
+ClintonDF[1:20,] %>%
+        ggplot(aes(x=(reorder(word, count)), y=count)) +
+        geom_bar(stat='identity', fill="#FF1493") + coord_flip() + theme(legend.position = "none") +
+        labs(x="")
+```
+```{r}
+ClintonCorpus1 <- RemoveNames(ClintonCorpus)
+TermFreqClinton <- CreateTermsMatrix(ClintonCorpus1)
+ClintonDF <- data.frame(word=names(TermFreqClinton), count=TermFreqClinton)
+
+wordcloud(ClintonDF$word, ClintonDF$count, max.words = 100, scale=c(2.5,.5), random.color = TRUE, colors=brewer.pal(9,"Set1"))
+```
+Comparison cloud
+```{r}
+allClinton <- paste(ClintonTweets$text, collapse = " ")
+allTrump <- paste(TrumpTweets$text, collapse = " ")
+allClTr <- c(allClinton, allTrump)
+
+allClTr <- VectorSource(allClTr)
+allCorpus <- VCorpus(allClTr)
+allCorpus <- CleanCorpus(allCorpus)
+allCorpus <- RemoveNames(allCorpus)
+
+TermsAll <- TermDocumentMatrix(allCorpus)
+colnames(TermsAll) <- c("Clinton", "Trump")
+MatrixAll <- as.matrix(TermsAll)
+
+comparison.cloud(MatrixAll, colors = c("#FF1493", "blue"), scale=c(2.3,.3), max.words = 75)
+```
+Bigrams
+Tidy text
+```{r}
+TrumpTidy <- tidy(TrumpCorpus)
+ClintonTidy <- tidy(ClintonCorpus)
+TrumpTidy1 <- tidy(TrumpCorpus1) #without names
+ClintonTidy1 <- tidy(ClintonCorpus1) #without names
+```
+Trump Bigrams
+```{r}
+plotBigrams <- function(tibble, topN=20, title="", color="#FF1493"){
+        x <- tibble %>% select(text) %>%
+        unnest_tokens(bigram, text, token = "ngrams", n = 2)
+        y <- x %>% count(bigram, sort = TRUE) %>% top_n(topN, wt=n) %>%
+        ggplot(aes(x=reorder(bigram, n), y=n)) +
+        geom_bar(stat='identity', fill=color) + coord_flip() +
+        theme(legend.position="none") + labs(x="", title=title)
+}
+
+b1 <- plotBigrams(TrumpTidy, title="With names", color="blue")
+b2 <- plotBigrams(TrumpTidy1, title="Without names", color="blue")
+grid.arrange(b1, b2, nrow=1)
+```
+Clinton Bigrams
+```{r}
+b1 <- plotBigrams(ClintonTidy, title="With names")
+b2 <- plotBigrams(ClintonTidy1, title="Without names")
+grid.arrange(b1, b2, nrow=1)
+```
+Sentiment analysis
+Bing lexicon
+```{r}
+get_sentiments("bing")
+```
+word used most frequently
+```{r}
+DocMetaTrump1 <- meta(TrumpCorpus1)
+DocMetaTrump1$date <- date(DocMetaTrump1$time)
+TrumpTidy1$date <- DocMetaTrump1$date
+
+DocMetaClinton1 <- meta(ClintonCorpus1)
+DocMetaClinton1$date <- date(DocMetaClinton1$time)
+ClintonTidy1$date <- DocMetaClinton1$date
+
+NoNamesTidy <- bind_rows(trump=TrumpTidy1, clinton=ClintonTidy1, .id="candidate")
+Words <- NoNamesTidy %>% unnest_tokens(word, text)
+```
+
+```{r}
+Bing <- Words %>% inner_join(get_sentiments("bing"), by="word")
+
+b1 <- Bing %>% filter(candidate=="trump") %>% count(word, sentiment, sort=TRUE) %>%
+        group_by(sentiment) %>% arrange(desc(n)) %>% slice(1:20) %>%
+        ggplot(aes(x=reorder(word, n), y=n)) +
+        geom_col(aes(fill=sentiment), show.legend=FALSE) +
+        coord_flip() +
+        facet_wrap(~sentiment, scales="free_y") +
+        labs(x="", y="number of times used", title="Donald Trump's most used words") +
+        scale_fill_manual(values = c("positive"="green", "negative"="red"))
+b2 <- Bing %>% filter(candidate=="clinton") %>% count(word, sentiment, sort=TRUE) %>%
+        group_by(sentiment) %>% arrange(desc(n)) %>% slice(1:20) %>%
+        ggplot(aes(x=reorder(word, n), y=n)) +
+        geom_col(aes(fill=sentiment), show.legend=FALSE) +
+        coord_flip() +
+        facet_wrap(~sentiment, scales="free_y") +
+        labs(x="", y="number of times used", title="Hillary Clinton's most used words") +
+        scale_fill_manual(values = c("positive"="green", "negative"="red"))
+grid.arrange(b1, b2)
+```
+```{r}
+t1 <- Bing %>% filter(candidate=="trump") %>% group_by(date) %>% count(sentiment) %>%
+        spread(sentiment, n) %>% mutate(score=positive-negative) %>%
+        ggplot(aes(x=date, y=score)) +
+        scale_x_date(limits=c(as.Date("2016-01-05"), as.Date("2016-09-27")), date_breaks = "1 month", date_labels = "%b") +
+        geom_line(stat="identity", col="blue") + geom_smooth(col="red") + labs(title="Sentiment Donald Trump")
+
+t2 <- Bing %>% filter(candidate=="clinton") %>% group_by(date) %>% count(sentiment) %>%
+        spread(sentiment, n) %>% mutate(score=positive-negative) %>%
+        ggplot(aes(x=date, y=score)) +
+        scale_x_date(limits=c(as.Date("2016-01-05"), as.Date("2016-09-27")), date_breaks = "1 month", date_labels = "%b") +
+        geom_line(stat="identity", col="blue") + geom_smooth(col="red") + labs(title="Sentiment Hillary Clinton")
+
+grid.arrange(t1, t2, ncol=1)
+```
+NRC Lexicon
+```{r}
+get_sentiments("nrc")
+```
+
+```{r}
+Nrc <- Words %>% inner_join(get_sentiments("nrc"), by="word")
+
+n1 <- Nrc %>% filter(candidate=="trump") %>% count(sentiment) %>%
+        ggplot(aes(x=sentiment, y=n, fill=sentiment)) +
+        geom_bar(stat="identity") + coord_polar() +
+        theme(legend.position = "none", axis.text.x = element_blank()) +
+        geom_text(aes(label=sentiment, y=2500)) +
+        labs(x="", y="", title="Trump")
+n2 <- Nrc %>% filter(candidate=="clinton") %>% count(sentiment) %>%
+        ggplot(aes(x=sentiment, y=n, fill=sentiment)) +
+        geom_bar(stat="identity") + coord_polar() +
+        theme(legend.position = "none", axis.text.x = element_blank()) +
+        geom_text(aes(label=sentiment, y=2500)) +
+        labs(x="", y="", title="Clinton")
+grid.arrange(n1, n2, nrow=1)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
